@@ -6,6 +6,13 @@ spec=importlib.util.spec_from_file_location('extension_study',GEN/'study.py');s=
 def git(*args,cwd=ROOT):
  p=subprocess.run(['git','-c','user.name=github-actions[bot]','-c','user.email=41898282+github-actions[bot]@users.noreply.github.com',*args],cwd=cwd,capture_output=True,text=True,check=True);return p.stdout.strip()
 
+def warmup_coverage(symbol,b,rr,start,end):
+ if any(r.get('status')!=200 for r in rr):raise ValueError('Failed public warmup response: '+symbol)
+ if not b or b[0][0]<start or b[-1][0]!=end-s.MINUTE:raise ValueError('Invalid warmup bounds: '+symbol)
+ if len(b)<s.engine.WARM or any(x[0]!=b[0][0]+i*s.MINUTE for i,x in enumerate(b)):raise ValueError('Incomplete seven-day control warmup: '+symbol)
+ return {'symbol':symbol,'requested_start':start,'first_available':b[0][0],'last':b[-1][0],'captured_minutes':len(b),
+  'unavailable_prefix_minutes':(b[0][0]-start)//s.MINUTE,'internal_missing_minutes':0,'control_warmup_complete':True}
+
 def main():
  if os.environ.get('GITHUB_ACTIONS')!='true' or os.environ.get('GITHUB_REPOSITORY')!='fengoftian/spot-alert-extensions-pilot':raise ValueError('Cloud repository identity required')
  if (GEN/'FREEZE.json').exists() or (GEN/'state.sqlite').exists():raise ValueError('Existing study cannot be reset')
@@ -19,11 +26,11 @@ def main():
   'collected_symbols':symbols,'benchmark_metadata':{x:current[x] for x in ['BTCUSDT','ETHUSDT']},
   'selection':'Same 44 inception identities as the owner-authorized A study, no outcome selection or replacement; metadata refreshed before B freeze'}
  (GEN/'COHORT.json').write_text(json.dumps(cohort,indent=2)+'\n');s.save_raw([receipt],'new-inception')
- c=s.connect();count=31*1440+65
+ c=s.connect();coverage=[]
  with concurrent.futures.ThreadPoolExecutor(max_workers=cfg['maximum_workers']) as pool:
   for symbol,b,rr in pool.map(lambda symbol:s.fetch_symbol(symbol,start,end,46),symbols):
    s.save_raw(rr,'warmup-'+symbol)
-   if len(b)!=count or any(x[0]!=start+i*s.MINUTE for i,x in enumerate(b)):raise ValueError('Incomplete public warmup: '+symbol)
+   coverage.append(warmup_coverage(symbol,b,rr,start,end))
    s.store_bars(c,symbol,b,s.clock_ms(),end);c.commit();print('Warmup',symbol,len(b),flush=True)
  s.create_accounts(c,cfg)
  # Prime rising-edge state after all BTC and cohort candles exist. No warmup events are eligible.
@@ -31,19 +38,20 @@ def main():
   rows=[json.loads(x[0]) for x in c.execute('SELECT raw FROM bars WHERE symbol=? ORDER BY t',(symbol,))]
   s.setkv(c,'processed:'+symbol,rows[-2][0]);s.process_signals(c,symbol,rows,cfg,{'start':end+10**12,'end':end+10**12+86400000},end)
   day=rows[-1][0]//86400000*86400000
-  if s.daily_return_threshold(c,symbol,day,cfg) is None:raise ValueError('Incomplete B0 calibration: '+symbol)
+  next(x for x in coverage if x['symbol']==symbol)['b0_calibration_available_at_freeze']=s.daily_return_threshold(c,symbol,day,cfg) is not None
+ (GEN/'WARMUP_COVERAGE.json').write_text(json.dumps({'scope':'Public pre-start feature history, not prospective outcomes; unavailable prefixes never fabricated','symbols':coverage},indent=2)+'\n')
  s.setkv(c,'stage','WARMUP_BEFORE_FUTURE_START');c.commit()
  tested=json.loads((GEN/'TEST_RESULTS.json').read_text())
  if not tested['success'] or any(s.digest(GEN/n)!=sha for n,sha in tested['hashes'].items()):raise ValueError('Tests not current')
  now=s.clock_ms();future=((now+20*s.MINUTE+5*s.MINUTE-1)//(5*s.MINUTE))*(5*s.MINUTE);finish=future+30*86400000
- names=['engine.py','study.py','config.json','DESIGN.md','COHORT_SEED.json','COHORT.json','TEST_RESULTS.json','engine_tests.py','engine_test_config.json','../test_alerts.py']
+ names=list(dict.fromkeys(list(tested['hashes'])+['DESIGN.md','COHORT_SEED.json','COHORT.json','WARMUP_COVERAGE.json','TEST_RESULTS.json','../.github/workflows/collector.yml']))
  freeze={'frozen':now,'start':future,'end':finish,'tail_end':finish+4*3600000,'start_utc':s.utc(future),'end_utc':s.utc(finish),'start_nzdt':s.nz(future),'end_nzdt':s.nz(finish),
   'hashes':{n:s.digest(GEN/n) for n in names},'authority':'OWNER_AUTHORIZED_PUBLIC_DATA_AND_SIMULATED_B_SCREEN_ONLY','comparisons':['B0-C_A2','B1-C_A2','B2-C_A2','B3-C_A2']}
  (GEN/'FREEZE.json').write_text(json.dumps(freeze,indent=2)+'\n');s.engine.write_status(c,freeze)
  counts={t:c.execute('SELECT COUNT(*) FROM '+t).fetchone()[0] for t in ['bars','kv','events','accounts','positions','fills','marks','issues']}
  if counts['accounts']!=45 or any(counts[t] for t in ['events','positions','fills','marks']):raise ValueError('Warmup unexpectedly exercised prospective economics')
  c.commit();c.close()
- git('add','gen/COHORT.json','gen/FREEZE.json','gen/TEST_RESULTS.json');git('commit','-m','Freeze independent B study before its future start');git('push','origin','HEAD:main')
+ git('add','gen/COHORT.json','gen/WARMUP_COVERAGE.json','gen/FREEZE.json','gen/TEST_RESULTS.json');git('commit','-m','Freeze independent B study before its future start');git('push','origin','HEAD:main')
  with tempfile.TemporaryDirectory(prefix='spot-seed-export-') as tmp:
   tmp=pathlib.Path(tmp);archive=tmp/'seed.sqlite.gz'
   with (GEN/'state.sqlite').open('rb') as src,gzip.open(archive,'wb') as dst:shutil.copyfileobj(src,dst)
