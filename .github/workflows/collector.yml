@@ -1,0 +1,81 @@
+name: Independent B alert comparison
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: One-time preparation, hosted preflight or collection lease
+        required: true
+        default: preflight
+        type: choice
+        options: [prepare, preflight, collect]
+      lease_seconds:
+        description: Operational lease duration (60–20100 seconds)
+        required: false
+        default: '20100'
+        type: string
+  schedule:
+    - cron: '37 */2 * * *'
+permissions:
+  contents: write
+  actions: write
+concurrency:
+  group: ${{ inputs.mode == 'preflight' && 'b-alert-preflight' || 'b-alert-single-writer' }}
+  cancel-in-progress: false
+jobs:
+  prepare:
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'prepare'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Synthetic tests before any prospective freeze
+        run: python3 run_tests.py
+      - name: Public warmup and immutable future freeze
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 bootstrap.py
+  preflight:
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'preflight'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Synthetic tests in a disposable source copy
+        run: |
+          temp_study=$(mktemp -d)
+          git archive HEAD | tar -x -C "$temp_study"
+          python3 "$temp_study/run_tests.py"
+      - name: Frozen identity and public transport
+        run: python3 cloud_runner.py preflight
+      - name: Preflight summary
+        if: always()
+        run: |
+          if test -f cloud-preflight.json; then
+            cat cloud-preflight.json >> "$GITHUB_STEP_SUMMARY"
+          fi
+  collect:
+    if: vars.COLLECT_ENABLED == 'true' && (github.event_name == 'schedule' || inputs.mode == 'collect')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          path: source
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: observations
+          path: observations
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /seed/
+            /SEED.json
+            /journal/
+            /STATUS.json
+            /CLOUD_STATUS.json
+            /RESULTS.json
+            /RESULTS.md
+      - name: Minute collection with durable bounded handoff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LEASE_SECONDS: ${{ inputs.lease_seconds || '20100' }}
+        run: python3 source/cloud_runner.py collect --data observations --lease-seconds "$LEASE_SECONDS" --checkpoint-seconds 300
