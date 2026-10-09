@@ -1,0 +1,30 @@
+{
+  "seed_sha256": "1e3d70452562dc74ab85c3b744162aa82511545804eb13e402c019839e7b4ced",
+  "sqlite_sha256": "1f57afdc5ec4c01388ac82b1579f9e5961dc64e2785fa878022571d18e541bae",
+  "seed_parts": [
+    {
+      "path": "seed/0000.part",
+      "bytes": 67108864,
+      "sha256": "c69ff471a28789615ea4613557aaa3bd4569dd7befb201f2324e5e6828aa8db5"
+    },
+    {
+      "path": "seed/0001.part",
+      "bytes": 50328284,
+      "sha256": "7a9547d6ebe23c01975a1cb4675e2f69a552ad5fc3c6d46c54ddd0e1cbfdf7d3"
+    }
+  ],
+  "snapshot_counts": {
+    "bars": 1943751,
+    "kv": 132,
+    "events": 0,
+    "accounts": 45,
+    "positions": 0,
+    "fills": 0,
+    "marks": 0,
+    "issues": 0
+  },
+  "warmup_only": true,
+  "freeze_sha256": "cb008dca30c97fe1d3eb28afd8367b7838fadf667ea44bdb80023b853e9a0cd9",
+  "source_commit": "5c3738611f66370981f7694eb22cf950862f143c",
+  "created_utc": "2026-10-09T08:25:31.678288+00:00"
+}
